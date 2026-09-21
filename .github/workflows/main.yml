@@ -1,0 +1,127 @@
+name: Build Andreas Hadjipanayiotou APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract app ZIP
+        shell: bash
+        run: |
+          set -e
+
+          ZIP_FILE="$(find . -maxdepth 2 -type f -iname '*.zip' | head -n 1)"
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No app ZIP file was found in the repository."
+            exit 1
+          fi
+
+          echo "Found app ZIP: $ZIP_FILE"
+
+          rm -rf /tmp/app_extract
+          mkdir -p /tmp/app_extract
+
+          unzip -q "$ZIP_FILE" -d /tmp/app_extract
+
+          SETTINGS_FILE="$(find /tmp/app_extract -type f \( -name 'settings.gradle.kts' -o -name 'settings.gradle' \) | head -n 1)"
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "ERROR: The ZIP does not contain a Gradle settings file."
+            exit 1
+          fi
+
+          PROJECT_ROOT="$(dirname "$SETTINGS_FILE")"
+
+          echo "Android project found at:"
+          echo "$PROJECT_ROOT"
+
+          rm -rf ./app
+          rm -rf ./gradle
+          rm -f ./build.gradle.kts
+          rm -f ./settings.gradle.kts
+          rm -f ./gradle.properties
+          rm -f ./local.properties
+          rm -f ./gradlew
+          rm -f ./gradlew.bat
+          rm -f ./gradle.lockfile
+
+          cp -a "$PROJECT_ROOT"/. ./
+
+          chmod +x ./gradlew 2>/dev/null || true
+
+          echo "Final project structure:"
+          ls -la
+
+          if [ ! -f "settings.gradle.kts" ] && [ ! -f "settings.gradle" ]; then
+            echo "ERROR: settings.gradle.kts/settings.gradle not found."
+            exit 1
+          fi
+
+          if [ ! -f "app/build.gradle.kts" ] && [ ! -f "app/build.gradle" ]; then
+            echo "ERROR: app/build.gradle.kts/app/build.gradle not found."
+            exit 1
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        shell: bash
+        run: |
+          set -e
+
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+
+          "$SDKMANAGER" "platform-tools"
+          "$SDKMANAGER" "platforms;android-36"
+          "$SDKMANAGER" "build-tools;36.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Build Debug APK
+        shell: bash
+        run: |
+          set -e
+
+          gradle :app:assembleDebug --stacktrace
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -e
+
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+          echo "APK successfully generated:"
+          ls -lh "$APK"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AndreasHadjiApp-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
